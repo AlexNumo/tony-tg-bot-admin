@@ -1,0 +1,6 @@
+{
+  "name": "Точка переходу - Telegram Bot Platform",
+  "description": "Платформа керування та інтерактивний симулятор телеграм-бота для 7+1 денного практикуму Антоніни Пашко 'Точка переходу'.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
