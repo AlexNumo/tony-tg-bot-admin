@@ -9,6 +9,11 @@ import { lessonsData as initialLessons } from './src/data/lessonsData';
 
 dotenv.config();
 
+// Ensure TELEGRAM_BOT_TOKEN is loaded even if named BOT_TOKEN in .env
+if (!process.env.TELEGRAM_BOT_TOKEN && process.env.BOT_TOKEN) {
+  process.env.TELEGRAM_BOT_TOKEN = process.env.BOT_TOKEN;
+}
+
 const app = express();
 const PORT = 3000;
 
@@ -66,8 +71,173 @@ app.get('/api/supabase-status', (req, res) => {
   });
 });
 
+// Helper to send notifications to Antonina's admin bot
+async function sendAdminNotification(text: string) {
+  const adminBotToken = process.env.ADMIN_BOT_TOKEN || '8923506126:AAE4CrClTzepTR4T2WfmjlYUB2Yba_d_3Tg';
+  const adminIds = [7780694746, 216147493];
+  
+  if (!adminBotToken) return;
+  
+  for (const adminId of adminIds) {
+    try {
+      await fetch(`https://api.telegram.org/bot${adminBotToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminId,
+          text: text,
+          parse_mode: 'HTML'
+        })
+      });
+    } catch (err: any) {
+      console.error(`Failed to send admin notification to ${adminId} from server:`, err.message);
+    }
+  }
+}
+
+// Helper to push logs to Google Sheets via Webhook
+async function logToGoogleSheet(logType: 'Messages' | 'Actions' | 'Progress' | 'Leads', data: any) {
+  const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL;
+  if (!webhookUrl) return;
+  
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        logType,
+        ...data
+      })
+    });
+  } catch (err: any) {
+    console.error('Failed to log to Google Sheets:', err.message);
+  }
+}
+
 // Local storage helpers to bypass missing current_day and last_active columns in database
 const PROGRESS_FILE_PATH = path.join(process.cwd(), 'src/data/user_progress.json');
+
+// Translate entire database to local files when USE_LOCAL_DB is true
+const USE_LOCAL_DB = process.env.USE_LOCAL_DB === 'true';
+const USERS_FILE_PATH = path.join(process.cwd(), 'src/data/users.json');
+const LEADS_FILE_PATH = path.join(process.cwd(), 'src/data/leads.json');
+const TEST_RESULTS_FILE_PATH = path.join(process.cwd(), 'src/data/test_results.json');
+const PROGRESS_LOGS_FILE_PATH = path.join(process.cwd(), 'src/data/course_progress_logs.json');
+const USER_ACTIONS_FILE_PATH = path.join(process.cwd(), 'src/data/user_actions.json');
+
+function readProgressLogs(): any[] {
+  try {
+    if (fs.existsSync(PROGRESS_LOGS_FILE_PATH)) {
+      return JSON.parse(fs.readFileSync(PROGRESS_LOGS_FILE_PATH, 'utf-8'));
+    }
+  } catch (err) {
+    console.error('Error reading progress logs:', err);
+  }
+  return [];
+}
+
+function writeProgressLogs(logs: any[]) {
+  try {
+    const dir = path.dirname(PROGRESS_LOGS_FILE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PROGRESS_LOGS_FILE_PATH, JSON.stringify(logs, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing progress logs:', err);
+  }
+}
+
+function readUserActions(): any[] {
+  try {
+    if (fs.existsSync(USER_ACTIONS_FILE_PATH)) {
+      return JSON.parse(fs.readFileSync(USER_ACTIONS_FILE_PATH, 'utf-8'));
+    }
+  } catch (err) {
+    console.error('Error reading user actions file:', err);
+  }
+  return [];
+}
+
+function writeUserActions(actions: any[]) {
+  try {
+    const dir = path.dirname(USER_ACTIONS_FILE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(USER_ACTIONS_FILE_PATH, JSON.stringify(actions, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing user actions file:', err);
+  }
+}
+
+function readLocalUsers(): any[] {
+  try {
+    if (fs.existsSync(USERS_FILE_PATH)) {
+      const data = fs.readFileSync(USERS_FILE_PATH, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading users file:', err);
+  }
+  return defaultUsers;
+}
+
+function writeLocalUsers(users: any[]) {
+  try {
+    const dir = path.dirname(USERS_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(users, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing users file:', err);
+  }
+}
+
+function readLocalLeads(): any[] {
+  try {
+    if (fs.existsSync(LEADS_FILE_PATH)) {
+      const data = fs.readFileSync(LEADS_FILE_PATH, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading leads file:', err);
+  }
+  return [];
+}
+
+function writeLocalLeads(leads: any[]) {
+  try {
+    const dir = path.dirname(LEADS_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(LEADS_FILE_PATH, JSON.stringify(leads, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing leads file:', err);
+  }
+}
+
+function readLocalTestResults(): any[] {
+  try {
+    if (fs.existsSync(TEST_RESULTS_FILE_PATH)) {
+      const data = fs.readFileSync(TEST_RESULTS_FILE_PATH, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading test results file:', err);
+  }
+  return [];
+}
+
+function writeLocalTestResults(results: any[]) {
+  try {
+    const dir = path.dirname(TEST_RESULTS_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(TEST_RESULTS_FILE_PATH, JSON.stringify(results, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing test results file:', err);
+  }
+}
 
 interface UserProgress {
   current_day: number;
@@ -109,8 +279,30 @@ function writeProgress(userId: string, currentDay: number, lastActive: string) {
 
 // API Endpoint: Get Users
 app.get('/api/users', async (req, res) => {
-  if (!supabase) {
-    return res.json({ success: true, data: defaultUsers, source: 'fallback' });
+  if (USE_LOCAL_DB || !supabase) {
+    const localUsers = readLocalUsers();
+    const progressStore = readProgress();
+    const mappedUsers = localUsers.map((u: any) => {
+      const uId = String(u.user_id || u.telegramId || u.id);
+      const localProg = (progressStore[uId] || {}) as any;
+      return {
+        id: uId,
+        telegramId: uId,
+        username: u.username || `@user_${uId}`,
+        phone: u.phone || '',
+        status: u.status || 'free',
+        joinDate: u.join_date ? u.join_date.split('T')[0] : (u.joinDate || new Date().toISOString().split('T')[0]),
+        currentDay: localProg.current_day !== undefined ? Number(localProg.current_day) : (u.current_day !== undefined ? Number(u.current_day) : (u.currentDay || 1)),
+        lastActive: localProg.last_active || u.last_active || u.lastActive || 'Сьогодні',
+        firstName: u.first_name || u.firstName || '',
+        lastName: u.last_name || u.lastName || '',
+        avatarUrl: u.avatar_url || u.avatarUrl || '',
+        utmSource: u.utm_source || u.utmSource || '',
+        utmMedium: u.utm_medium || u.utmMedium || '',
+        isBlocked: u.is_blocked !== undefined ? u.is_blocked : (u.isBlocked || false)
+      };
+    });
+    return res.json({ success: true, data: mappedUsers, source: 'local' });
   }
 
   try {
@@ -140,7 +332,13 @@ app.get('/api/users', async (req, res) => {
         status: u.status || 'free',
         joinDate: u.join_date ? u.join_date.split('T')[0] : new Date().toISOString().split('T')[0],
         currentDay: localProg.current_day !== undefined ? Number(localProg.current_day) : (u.current_day !== undefined ? Number(u.current_day) : 1),
-        lastActive: localProg.last_active || u.last_active || 'Сьогодні'
+        lastActive: localProg.last_active || u.last_active || 'Сьогодні',
+        firstName: u.first_name || '',
+        lastName: u.last_name || '',
+        avatarUrl: u.avatar_url || '',
+        utmSource: u.utm_source || '',
+        utmMedium: u.utm_medium || '',
+        isBlocked: u.is_blocked || false
       };
     });
 
@@ -153,7 +351,7 @@ app.get('/api/users', async (req, res) => {
 
 // API Endpoint: Create User
 app.post('/api/users', async (req, res) => {
-  const { telegramId, username, phone, status, currentDay } = req.body;
+  const { telegramId, username, phone, status, currentDay, firstName, lastName, avatarUrl, utmSource, utmMedium, isBlocked } = req.body;
   const user_id = parseInt(telegramId);
   
   if (isNaN(user_id)) {
@@ -163,14 +361,46 @@ app.post('/api/users', async (req, res) => {
   const join_date = new Date().toISOString();
   const last_active = 'Сьогодні, щойно';
 
-  if (!supabase) {
-    return res.json({ success: true, message: 'Створено локально (без Supabase)' });
+  // Save user progress locally
+  writeProgress(String(user_id), currentDay || 1, last_active);
+
+  if (USE_LOCAL_DB || !supabase) {
+    const localUsers = readLocalUsers();
+    let user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
+    if (user) {
+      if (username !== undefined) user.username = username;
+      if (phone !== undefined) user.phone = phone;
+      if (status !== undefined) user.status = status;
+      if (firstName !== undefined) user.first_name = firstName;
+      if (lastName !== undefined) user.last_name = lastName;
+      if (avatarUrl !== undefined) user.avatar_url = avatarUrl;
+      if (utmSource !== undefined) user.utm_source = utmSource;
+      if (utmMedium !== undefined) user.utm_medium = utmMedium;
+      if (isBlocked !== undefined) user.is_blocked = isBlocked;
+    } else {
+      user = {
+        user_id,
+        telegramId: String(user_id),
+        username: username || `@user_${user_id}`,
+        phone: phone || '',
+        status: status || 'free',
+        first_name: firstName || '',
+        last_name: lastName || '',
+        avatar_url: avatarUrl || '',
+        utm_source: utmSource || '',
+        utm_medium: utmMedium || '',
+        is_blocked: isBlocked || false,
+        join_date,
+        current_day: currentDay || 1,
+        last_active
+      };
+      localUsers.push(user);
+    }
+    writeLocalUsers(localUsers);
+    return res.json({ success: true, data: user, source: 'local' });
   }
 
   try {
-    // Save user progress locally to prevent database missing column errors
-    writeProgress(String(user_id), currentDay || 1, last_active);
-
     const { data, error } = await supabase
       .from('users')
       .upsert({
@@ -178,6 +408,12 @@ app.post('/api/users', async (req, res) => {
         username,
         phone: phone || null,
         status: status || 'free',
+        first_name: firstName || null,
+        last_name: lastName || null,
+        avatar_url: avatarUrl || null,
+        utm_source: utmSource || null,
+        utm_medium: utmMedium || null,
+        is_blocked: isBlocked || false,
         join_date
       }, { onConflict: 'user_id' })
       .select();
@@ -203,16 +439,33 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
   }
 
-  if (!supabase) {
+  const last_active = 'Сьогодні, щойно';
+  const progressStore = readProgress();
+  const currentDay = progressStore[String(user_id)]?.current_day || 1;
+  writeProgress(String(user_id), currentDay, last_active);
+
+  if (USE_LOCAL_DB || !supabase) {
+    const localUsers = readLocalUsers();
+    const user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
+    if (user) {
+      user.status = status;
+      writeLocalUsers(localUsers);
+      if (status !== 'free') {
+        const usernameStr = user.username || '';
+        const userLink = usernameStr ? `https://t.me/${usernameStr.replace('@', '')}` : `tg://user?id=${user_id}`;
+        const userDisplayName = user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : `@user_${user_id}`;
+        sendAdminNotification(
+          `🎉 <b>Активовано тариф (локально)!</b>\n\n` +
+          `👤 <b>Ім'я:</b> ${userDisplayName}\n` +
+          `⭐ <b>Новий статус:</b> <code>${status}</code>\n\n` +
+          `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
+        );
+      }
+    }
     return res.json({ success: true, message: 'Статус оновлено локально' });
   }
 
   try {
-    const last_active = 'Сьогодні, щойно';
-    const progressStore = readProgress();
-    const currentDay = progressStore[String(user_id)]?.current_day || 1;
-    writeProgress(String(user_id), currentDay, last_active);
-
     const { data, error } = await supabase
       .from('users')
       .update({ status })
@@ -220,6 +473,27 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
 
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
+    }
+
+    if (status !== 'free') {
+      const { data: userProfile } = await supabase
+        .from('users')
+        .select('username, first_name, last_name')
+        .eq('user_id', user_id)
+        .maybeSingle();
+
+      const usernameStr = userProfile?.username || '';
+      const firstNameStr = userProfile?.first_name || '';
+      const lastNameStr = userProfile?.last_name || '';
+      const userLink = usernameStr ? `https://t.me/${usernameStr.replace('@', '')}` : `tg://user?id=${user_id}`;
+      const userDisplayName = firstNameStr ? `${firstNameStr} ${lastNameStr}`.trim() : `@user_${user_id}`;
+
+      sendAdminNotification(
+        `🎉 <b>Активовано оплачений тариф!</b>\n\n` +
+        `👤 <b>Ім'я:</b> ${userDisplayName}\n` +
+        `⭐ <b>Новий статус:</b> <code>${status}</code>\n\n` +
+        `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
+      );
     }
 
     res.json({ success: true, data });
@@ -238,14 +512,21 @@ app.put('/api/users/:telegramId/current-day', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
   }
 
-  if (!supabase) {
+  const last_active = 'Сьогодні, щойно';
+  writeProgress(String(user_id), currentDay || 1, last_active);
+
+  if (USE_LOCAL_DB || !supabase) {
+    const localUsers = readLocalUsers();
+    const user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
+    if (user) {
+      user.current_day = currentDay || 1;
+      user.last_active = last_active;
+      writeLocalUsers(localUsers);
+    }
     return res.json({ success: true, message: 'Прогрес оновлено локально' });
   }
 
   try {
-    const last_active = 'Сьогодні, щойно';
-    writeProgress(String(user_id), currentDay || 1, last_active);
-
     res.json({ success: true, message: 'Прогрес успішно оновлено у локальному кеші' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -261,7 +542,16 @@ app.delete('/api/users/:telegramId', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
   }
 
-  if (!supabase) {
+  if (USE_LOCAL_DB || !supabase) {
+    const localUsers = readLocalUsers();
+    const filtered = localUsers.filter((u: any) => String(u.user_id || u.telegramId || u.id) !== String(user_id));
+    writeLocalUsers(filtered);
+    // Also remove from progress store
+    try {
+      const store = readProgress();
+      delete store[String(user_id)];
+      fs.writeFileSync(PROGRESS_FILE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+    } catch (e) {}
     return res.json({ success: true, message: 'Видалено локально' });
   }
 
@@ -329,8 +619,9 @@ app.get('/api/packages', async (req, res) => {
 
 // API Endpoint: Get Leads
 app.get('/api/leads', async (req, res) => {
-  if (!supabase) {
-    return res.json({ success: true, data: defaultLeads, source: 'fallback' });
+  if (USE_LOCAL_DB || !supabase) {
+    const localLeads = readLocalLeads();
+    return res.json({ success: true, data: localLeads.length > 0 ? localLeads : defaultLeads, source: 'local' });
   }
 
   try {
@@ -362,8 +653,45 @@ app.post('/api/leads', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
   }
 
-  if (!supabase) {
-    return res.json({ success: true, message: 'Лід збережено локально' });
+  if (USE_LOCAL_DB || !supabase) {
+    const localLeads = readLocalLeads();
+    const localUsers = readLocalUsers();
+    let user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
+    if (!user) {
+      user = {
+        user_id,
+        telegramId: String(user_id),
+        username: `@user_${user_id}`,
+        status: 'free',
+        join_date: new Date().toISOString()
+      };
+      localUsers.push(user);
+      writeLocalUsers(localUsers);
+      writeProgress(String(user_id), 1, 'Сьогодні, щойно');
+    }
+
+    const newLead = {
+      id: localLeads.length + 1,
+      user_id,
+      package_name: packageName,
+      status: status || 'pending',
+      created_at: new Date().toISOString()
+    };
+    localLeads.push(newLead);
+    writeLocalLeads(localLeads);
+    
+    logToGoogleSheet('Leads', { userId: user_id, packageName, status: newLead.status });
+
+    if (newLead.status === 'success') {
+      const userLink = `tg://user?id=${user_id}`;
+      sendAdminNotification(
+        `💳 <b>Отримано оплату (локально)!</b>\n\n` +
+        `🆔 <b>Telegram ID:</b> <code>${user_id}</code>\n` +
+        `📦 <b>Тариф:</b> <code>${packageName}</code>\n\n` +
+        `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
+      );
+    }
+    return res.json({ success: true, data: [newLead], source: 'local' });
   }
 
   try {
@@ -402,6 +730,32 @@ app.post('/api/leads', async (req, res) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    logToGoogleSheet('Leads', { userId: user_id, packageName, status: status || 'pending' });
+
+    if (status === 'success') {
+      const { data: userProfile } = await supabase
+        .from('users')
+        .select('username, first_name, last_name, phone')
+        .eq('user_id', user_id)
+        .maybeSingle();
+
+      const usernameStr = userProfile?.username || '';
+      const firstNameStr = userProfile?.first_name || '';
+      const lastNameStr = userProfile?.last_name || '';
+      const phoneStr = userProfile?.phone || 'не вказано';
+      const userLink = usernameStr ? `https://t.me/${usernameStr.replace('@', '')}` : `tg://user?id=${user_id}`;
+      const userDisplayName = firstNameStr ? `${firstNameStr} ${lastNameStr}`.trim() : `@user_${user_id}`;
+
+      sendAdminNotification(
+        `💳 <b>Отримано нову оплату!</b>\n\n` +
+        `👤 <b>Ім'я:</b> ${userDisplayName}\n` +
+        `🆔 <b>Telegram ID:</b> <code>${user_id}</code>\n` +
+        `📞 <b>Телефон:</b> ${phoneStr}\n` +
+        `📦 <b>Тариф:</b> <code>${packageName}</code>\n\n` +
+        `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
+      );
+    }
+
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -410,8 +764,9 @@ app.post('/api/leads', async (req, res) => {
 
 // API Endpoint: Get Test Results
 app.get('/api/test-results', async (req, res) => {
-  if (!supabase) {
-    return res.json({ success: true, data: defaultTestResults, source: 'fallback' });
+  if (USE_LOCAL_DB || !supabase) {
+    const localResults = readLocalTestResults();
+    return res.json({ success: true, data: localResults.length > 0 ? localResults : defaultTestResults, source: 'local' });
   }
 
   try {
@@ -443,8 +798,32 @@ app.post('/api/test-results', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
   }
 
-  if (!supabase) {
-    return res.json({ success: true, message: 'Результат тесту збережено локально' });
+  if (USE_LOCAL_DB || !supabase) {
+    const localResults = readLocalTestResults();
+    const localUsers = readLocalUsers();
+    let user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
+    if (!user) {
+      user = {
+        user_id,
+        telegramId: String(user_id),
+        username: `@user_${user_id}`,
+        status: 'free',
+        join_date: new Date().toISOString()
+      };
+      localUsers.push(user);
+      writeLocalUsers(localUsers);
+      writeProgress(String(user_id), 1, 'Сьогодні, щойно');
+    }
+
+    const newResult = {
+      id: localResults.length + 1,
+      user_id,
+      score: Number(score),
+      created_at: new Date().toISOString()
+    };
+    localResults.push(newResult);
+    writeLocalTestResults(localResults);
+    return res.json({ success: true, data: [newResult], source: 'local' });
   }
 
   try {
@@ -482,6 +861,105 @@ app.post('/api/test-results', async (req, res) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API Endpoint: Log User Action
+app.post('/api/logs/action', async (req, res) => {
+  const { telegramId, actionType, targetElement, metadata } = req.body;
+  const user_id = parseInt(telegramId);
+  
+  if (isNaN(user_id)) {
+    return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
+  }
+
+  if (USE_LOCAL_DB || !supabase) {
+    const localActions = readUserActions();
+    const newAction = {
+      id: localActions.length + 1,
+      user_id,
+      action_type: actionType,
+      target_element: targetElement || '',
+      created_at: new Date().toISOString(),
+      metadata: metadata || {}
+    };
+    localActions.push(newAction);
+    writeUserActions(localActions);
+    logToGoogleSheet('Actions', { userId: user_id, actionType, targetElement });
+    return res.json({ success: true, message: 'Дію зафіксовано локально', data: newAction });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('user_actions')
+      .insert({
+        user_id,
+        action_type: actionType,
+        target_element: targetElement,
+        created_at: new Date().toISOString(),
+        metadata: metadata || {}
+      })
+      .select();
+
+    if (error) {
+      console.error('Supabase error saving action log:', error.message);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    
+    logToGoogleSheet('Actions', { userId: user_id, actionType, targetElement });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API Endpoint: Log Course Progress
+app.post('/api/logs/progress', async (req, res) => {
+  const { telegramId, dayNum, deliveryType, status, errorMessage } = req.body;
+  const user_id = parseInt(telegramId);
+
+  if (isNaN(user_id)) {
+    return res.status(400).json({ success: false, error: 'Некоректний Telegram ID' });
+  }
+
+  if (USE_LOCAL_DB || !supabase) {
+    const localLogs = readProgressLogs();
+    const newLog = {
+      id: localLogs.length + 1,
+      user_id,
+      day_num: Number(dayNum),
+      sent_at: new Date().toISOString(),
+      delivery_type: deliveryType || 'auto',
+      status: status || 'delivered',
+      error_message: errorMessage || null
+    };
+    localLogs.push(newLog);
+    writeProgressLogs(localLogs);
+    logToGoogleSheet('Progress', { userId: user_id, dayNum, deliveryType, status, errorMessage });
+    return res.json({ success: true, message: 'Прогрес зафіксовано локально', data: newLog });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('course_progress_logs')
+      .insert({
+        user_id,
+        day_num: Number(dayNum),
+        sent_at: new Date().toISOString(),
+        delivery_type: deliveryType || 'auto',
+        status: status || 'delivered',
+        error_message: errorMessage || null
+      })
+      .select();
+
+    if (error) {
+      console.error('Supabase error saving progress log:', error.message);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    logToGoogleSheet('Progress', { userId: user_id, dayNum, deliveryType, status, errorMessage });
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -553,6 +1031,7 @@ function saveMessageLocally(userId: string, sender: 'user' | 'bot' | 'system', t
         }
       });
     }
+    logToGoogleSheet('Messages', { userId, sender, text });
   } catch (err) {
     console.error('Error saving message locally:', err);
   }
@@ -1073,8 +1552,14 @@ function saveBroadcastLog(log: BroadcastLog) {
   }
 }
 
-async function runNewsletterBroadcast(isManual: boolean = false): Promise<BroadcastLog> {
+async function runNewsletterBroadcast(
+  isManual: boolean = false,
+  overrideTargetAudience?: string,
+  targetUserId?: string,
+  overrideDayNum?: number
+): Promise<BroadcastLog> {
   const config = getSchedulerConfig();
+  const audience = overrideTargetAudience || config.targetAudience;
   const lessons = getLessons();
   const logsList: string[] = [];
   const timestampStr = new Date().toISOString();
@@ -1084,7 +1569,10 @@ async function runNewsletterBroadcast(isManual: boolean = false): Promise<Broadc
   
   let targetUsers: any[] = [];
   
-  if (supabase) {
+  if (USE_LOCAL_DB) {
+    targetUsers = readLocalUsers();
+    logsList.push(`[${timeLabel}] ℹ️ Використовується локальна база даних users.json`);
+  } else if (supabase) {
     try {
       const { data, error } = await supabase.from('users').select('*');
       if (!error && data) {
@@ -1102,50 +1590,61 @@ async function runNewsletterBroadcast(isManual: boolean = false): Promise<Broadc
     logsList.push(`[${timeLabel}] ℹ️ База Supabase неактивна, використовується локальний список.`);
   }
 
-  // Filter users based on config targetAudience
-  const getAudienceLabel = (target: string): string => {
-    switch (target) {
-      case 'paid': return 'Лише оплачені';
-      case 'unpaid': return 'Не оплачені';
-      case 'free': return 'Безкоштовний';
-      case 'base': return 'Базовий';
-      case 'support': return 'Супровід';
-      case 'vip': return 'ВІП';
-      default: return 'Усі';
-    }
-  };
-
-  const filtered = targetUsers.filter(u => {
-    const userStatus = u.status || 'free';
-    if (config.targetAudience === 'paid') {
-      return userStatus === 'base' || userStatus === 'support' || userStatus === 'vip';
-    }
-    if (config.targetAudience === 'unpaid' || config.targetAudience === 'free') {
-      return userStatus === 'free';
-    }
-    if (config.targetAudience === 'base') {
-      return userStatus === 'base';
-    }
-    if (config.targetAudience === 'support') {
-      return userStatus === 'support';
-    }
-    if (config.targetAudience === 'vip') {
-      return userStatus === 'vip';
-    }
-    return true; // Send to all
-  });
-
-  logsList.push(`[${timeLabel}] 👥 Знайдено користувачів для розсилки: ${filtered.length} (Ціль: ${getAudienceLabel(config.targetAudience)})`);
+  // Filter users based on config targetAudience or targetUserId
+  let filtered: any[] = [];
+  if (targetUserId) {
+    filtered = targetUsers.filter(u => String(u.user_id || u.telegramId || u.id) === String(targetUserId));
+    logsList.push(`[${timeLabel}] 👥 Цільовий користувач: ${targetUserId} (${filtered[0]?.username || 'невідомий'})`);
+  } else {
+    const getAudienceLabel = (target: string): string => {
+      switch (target) {
+        case 'paid': return 'Лише оплачені';
+        case 'unpaid': return 'Не оплачені';
+        case 'free': return 'Безкоштовний';
+        case 'base': return 'Базовий';
+        case 'support': return 'Супровід';
+        case 'vip': return 'ВІП';
+        default: return 'Усі';
+      }
+    };
+    filtered = targetUsers.filter(u => {
+      const userStatus = u.status || 'free';
+      if (audience === 'paid') {
+        return userStatus === 'base' || userStatus === 'support' || userStatus === 'vip';
+      }
+      if (audience === 'unpaid' || audience === 'free') {
+        return userStatus === 'free';
+      }
+      if (audience === 'base') {
+        return userStatus === 'base';
+      }
+      if (audience === 'support') {
+        return userStatus === 'support';
+      }
+      if (audience === 'vip') {
+        return userStatus === 'vip';
+      }
+      return true; // Send to all
+    });
+    logsList.push(`[${timeLabel}] 👥 Знайдено користувачів для розсилки: ${filtered.length} (Ціль: ${getAudienceLabel(audience)})`);
+  }
 
   let sentSuccessCount = 0;
   const progressStore = readProgress();
 
   for (const user of filtered) {
-    const uId = String(user.user_id || user.telegramId);
+    const uId = String(user.user_id || user.telegramId || user.id);
     const localProg = progressStore[uId];
-    const currentDay = localProg ? Number(localProg.current_day) : (user.current_day !== undefined ? Number(user.current_day) : 1);
+    const currentDay = overrideDayNum || (localProg ? Number(localProg.current_day) : (user.current_day !== undefined ? Number(user.current_day) : 1));
     
-    if (currentDay > 8) {
+    const userStatus = user.status || 'free';
+    const isPaid = userStatus === 'base' || userStatus === 'support' || userStatus === 'vip';
+    if (currentDay > 1 && !isPaid) {
+      logsList.push(`[${timeLabel}] 🔒 Користувач ${user.username || uId} має статус 'free', надсилання Дня ${currentDay} заблоковано.`);
+      continue;
+    }
+
+    if (currentDay > 8 && !overrideDayNum) {
       logsList.push(`[${timeLabel}] 🎓 Користувач ${user.username || uId} вже завершив практикум (День 8)`);
       continue;
     }
@@ -1157,33 +1656,115 @@ async function runNewsletterBroadcast(isManual: boolean = false): Promise<Broadc
     }
 
     // Format beautiful Telegram message
-    const messageText = `🌸 *ПРАКТИКУМ «ТОЧКА ПЕРЕХОДУ» — ДЕНЬ ${lesson.day}* 🌸\n\n` +
-      `✨ *Тема:* ${lesson.title}\n` +
-      `📝 *Опис:* ${lesson.description}\n\n` +
+    const messageText = 
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🌸 *ДЕНЬ ${lesson.day} • ПРАКТИКУМ «ТОЧКА ПЕРЕХОДУ»* 🌸\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `✨ *Тема дня:*\n«${lesson.title}»\n\n` +
+      `📝 *Про що цей день:*\n${lesson.description}\n\n` +
+      `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n` +
+      `ℹ️ *МАТЕРІАЛИ ЗАНЯТТЯ:*\n` +
       `🎥 *Відео-урок:* ${lesson.videoDuration || '15-20 хв'}\n` +
       `🧘‍♀️ *Практика:* ${lesson.practiceTitle || 'Аудіо-медитація'}\n\n` +
-      `*Детальний зміст заняття:*\n${lesson.fullDescription || ''}\n\n` +
+      `📖 *Детальний зміст:*\n${lesson.fullDescription || ''}\n\n` +
       `📂 *Завдання в робочому зошиті:*\n` +
       `${lesson.pdfFiles && lesson.pdfFiles.length > 0 ? lesson.pdfFiles.map((f: string) => `• ${f}`).join('\n') : '—'}\n\n` +
-      `🙏 Проходьте практику у зручному темпі! Наступний урок буде надіслано автоматично об ${String(config.broadcastHour).padStart(2, '0')}:${String(config.broadcastMinute).padStart(2, '0')}.`;
+      `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n` +
+      `🙏 Проходьте практику у зручному темпі!\n` +
+      `Наступний урок буде надіслано автоматично об ${String(config.broadcastHour).padStart(2, '0')}:${String(config.broadcastMinute).padStart(2, '0')}.`;
 
     // Send real Telegram message
     const token = process.env.TELEGRAM_BOT_TOKEN;
     let tgSent = false;
     if (token) {
       try {
+        // 1. Send text message (with copy protection)
         const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: parseInt(uId),
             text: messageText,
-            parse_mode: 'Markdown'
+            parse_mode: 'Markdown',
+            protect_content: true
           })
         });
         const tgData = (await tgRes.json()) as any;
+        
         if (tgData && tgData.ok) {
           tgSent = true;
+          
+          // 2. Send photo if registered (with copy protection)
+          if (lesson.photoFileId) {
+            try {
+              await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: parseInt(uId),
+                  photo: lesson.photoFileId,
+                  caption: '🖼 Зображення дня',
+                  protect_content: true
+                })
+              });
+            } catch (mediaErr: any) {
+              console.error(`Failed to send broadcast photo to ${uId}:`, mediaErr.message);
+            }
+          }
+          
+          // 3. Send video if registered (with copy protection)
+          if (lesson.videoFileId) {
+            try {
+              await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: parseInt(uId),
+                  video: lesson.videoFileId,
+                  caption: '🎥 Відео-урок',
+                  protect_content: true
+                })
+              });
+            } catch (mediaErr: any) {
+              console.error(`Failed to send broadcast video to ${uId}:`, mediaErr.message);
+            }
+          }
+          
+          // 4. Send audio if registered (with copy protection)
+          if (lesson.audioFileId) {
+            try {
+              await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: parseInt(uId),
+                  audio: lesson.audioFileId,
+                  caption: '🧘‍♀️ Аудіо-практика',
+                  protect_content: true
+                })
+              });
+            } catch (mediaErr: any) {
+              console.error(`Failed to send broadcast audio to ${uId}:`, mediaErr.message);
+            }
+          }
+          
+          // 5. Send PDF document if registered (with copy protection)
+          if (lesson.pdfFileId) {
+            try {
+              await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: parseInt(uId),
+                  document: lesson.pdfFileId,
+                  caption: '📝 Практика (робочий зошит)',
+                  protect_content: true
+                })
+              });
+            } catch (mediaErr: any) {
+              console.error(`Failed to send broadcast document to ${uId}:`, mediaErr.message);
+            }
+          }
         } else {
           logsList.push(`[${timeLabel}] ⚠️ Повідомлення для ${user.username || uId} не відправлено в Telegram (користувач заблокував бота або невірний ID).`);
         }
@@ -1219,7 +1800,43 @@ async function runNewsletterBroadcast(isManual: boolean = false): Promise<Broadc
 
     if (tgSent) {
       sentSuccessCount++;
+      if (currentDay === 8) {
+        const usernameStr = user.username || '';
+        const userLink = usernameStr ? `https://t.me/${usernameStr.replace('@', '')}` : `tg://user?id=${uId}`;
+        const userDisplayName = user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : `@user_${uId}`;
+        sendAdminNotification(
+          `🎓 <b>Практикум успішно завершено!</b>\n\n` +
+          `👤 <b>Ім'я:</b> ${userDisplayName}\n` +
+          `🏁 <b>Статус:</b> Надіслано матеріали 8-го дня\n\n` +
+          `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
+        );
+      }
       logsList.push(`[${timeLabel}] ✅ [День ${currentDay}] успішно надіслано користувачу ${user.username || uId}. Встановлено наступний день: ${nextDay}`);
+      
+      // Log progress milestone locally or in Supabase
+      if (USE_LOCAL_DB || !supabase) {
+        const localLogs = readProgressLogs();
+        localLogs.push({
+          id: localLogs.length + 1,
+          user_id: parseInt(uId),
+          day_num: currentDay,
+          sent_at: new Date().toISOString(),
+          delivery_type: isManual ? 'manual' : 'auto',
+          status: 'delivered',
+          error_message: null
+        });
+        writeProgressLogs(localLogs);
+      } else {
+        try {
+          await supabase.from('course_progress_logs').insert({
+            user_id: parseInt(uId),
+            day_num: currentDay,
+            sent_at: new Date().toISOString(),
+            delivery_type: isManual ? 'manual' : 'auto',
+            status: 'delivered'
+          });
+        } catch (e) {}
+      }
     }
   }
 
@@ -1256,7 +1873,8 @@ app.post('/api/broadcast/config', (req, res) => {
 // Scheduler manual trigger
 app.post('/api/broadcast/trigger', async (req, res) => {
   try {
-    const log = await runNewsletterBroadcast(true);
+    const { targetAudience, targetUserId, dayNum } = req.body;
+    const log = await runNewsletterBroadcast(true, targetAudience, targetUserId, dayNum ? Number(dayNum) : undefined);
     res.json({ success: true, message: 'Розсилку запущено успішно', log });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

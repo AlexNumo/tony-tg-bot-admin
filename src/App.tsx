@@ -189,18 +189,6 @@ export default function App() {
               <BookOpen className="w-3.5 h-3.5 text-amber-400" />
               <span>Програма (8 днів)</span>
             </button>
-
-            <button
-              onClick={() => setActiveTab('code')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all shrink-0 cursor-pointer ${
-                activeTab === 'code'
-                  ? 'bg-[#1e293b] text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Code2 className="w-3.5 h-3.5 text-purple-400" />
-              <span>Код бота (Python)</span>
-            </button>
           </nav>
 
           {/* Quick Support / Instagram link */}
@@ -260,10 +248,6 @@ export default function App() {
                 lessons={lessons}
                 onUpdateLessons={handleUpdateLessons}
               />
-            )}
-
-            {activeTab === 'code' && (
-              <CodeExplorer />
             )}
           </motion.div>
         </AnimatePresence>

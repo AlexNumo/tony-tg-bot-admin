@@ -123,6 +123,7 @@ export default function CRMDashboard({
   const [configSaving, setConfigSaving] = useState<boolean>(false);
   const [configMessage, setConfigMessage] = useState<string>('');
   const [broadcastLogs, setBroadcastLogs] = useState<any[]>([]);
+  const [selectedBroadcastAudience, setSelectedBroadcastAudience] = useState<string>('all');
 
   // Cron automation logs simulation
   const [cronLogs, setCronLogs] = useState<string[]>([
@@ -229,11 +230,13 @@ export default function CRMDashboard({
     fetchDashboardData();
   }, []);
 
-  const triggerCronSimulation = async () => {
+  const triggerCronSimulation = async (audience: string) => {
     setLoading(true);
     try {
       const res = await fetch('/api/broadcast/trigger', {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetAudience: audience })
       });
       const data = await res.json();
       if (data.success) {
@@ -829,18 +832,33 @@ CREATE TABLE IF NOT EXISTS messages (
 
           {/* APScheduler Background Task Monitoring */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
               <div className="flex items-center gap-1.5">
                 <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
                 <h3 className="font-display font-semibold text-base text-white">Робота планувальника</h3>
               </div>
-              <button 
-                onClick={triggerCronSimulation}
-                className="bg-sky-500 hover:bg-sky-600 text-white text-[10px] px-2.5 py-1.5 rounded border border-sky-400/20 transition-all font-semibold flex items-center gap-1 cursor-pointer"
-              >
-                <RefreshCw className="w-3 h-3" />
-                Запустити розсилку
-              </button>
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <select
+                  value={selectedBroadcastAudience}
+                  onChange={(e) => setSelectedBroadcastAudience(e.target.value)}
+                  className="bg-slate-950/60 border border-slate-800 rounded px-2 py-1.5 text-[10px] text-white font-semibold cursor-pointer outline-none font-sans"
+                >
+                  <option value="all" className="font-sans">Усім</option>
+                  <option value="paid" className="font-sans">Передплаченим</option>
+                  <option value="vip" className="font-sans">Лише ВІП</option>
+                  <option value="support" className="font-sans">Лише Супровід</option>
+                  <option value="base" className="font-sans">Лише Базовий</option>
+                  <option value="free" className="font-sans">Лише Безкоштовним</option>
+                </select>
+                <button 
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); triggerCronSimulation(selectedBroadcastAudience); }}
+                  className="bg-sky-500 hover:bg-sky-600 text-white text-[10px] px-2.5 py-1.5 rounded border border-sky-400/20 transition-all font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Запустити розсилку
+                </button>
+              </div>
             </div>
             
             <p className="text-[11px] text-slate-400 leading-relaxed">

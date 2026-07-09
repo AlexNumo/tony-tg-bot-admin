@@ -24,6 +24,9 @@ export default function TelegramSimulator({
   onPurchaseSuccess,
   lessons = fallbackLessons
 }: TelegramSimulatorProps) {
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [selectedUser, setSelectedUser] = useState<any>(null); // null means Tetiana (fallback)
+  const [isRealTime, setIsRealTime] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-system',
@@ -39,13 +42,17 @@ export default function TelegramSimulator({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const audioIntervalRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
 
+  const getActiveId = () => {
+    return isRealTime && selectedUser ? String(selectedUser.telegramId || selectedUser.id) : '412054211';
+  };
+
   const saveMessageToServer = async (sender: 'user' | 'bot' | 'system', text: string) => {
     try {
       await fetch('/api/messages/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          telegramId: '412054211',
+          telegramId: getActiveId(),
           sender,
           text
         })
@@ -59,11 +66,36 @@ export default function TelegramSimulator({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load message history on mount or when userStatus changes
+  // Fetch users list on mount
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('/api/users');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          setUsersList(data.data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch users:', err);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  // Update status and current day progress when selected user changes
+  useEffect(() => {
+    if (isRealTime && selectedUser) {
+      setUserStatus(selectedUser.status || 'free');
+      setCurrentDay(selectedUser.currentDay || 1);
+    }
+  }, [selectedUser, isRealTime]);
+
+  // Load message history on mount, selected user change, or mode toggle
   useEffect(() => {
     const loadMessagesHistory = async () => {
+      const activeId = getActiveId();
       try {
-        const res = await fetch('/api/messages/412054211');
+        const res = await fetch(`/api/messages/${activeId}`);
         const data = await res.json();
         if (data.success && data.data && data.data.length > 0) {
           const loaded = data.data.map((m: any) => ({
@@ -74,15 +106,33 @@ export default function TelegramSimulator({
           }));
           setMessages(loaded);
         } else {
-          handleStartCommand();
+          if (!isRealTime) {
+            handleStartCommand();
+          } else {
+            setMessages([
+              {
+                id: 'empty-realtime',
+                sender: 'system',
+                text: 'Історія повідомлень порожня. Почніть діалог в реальному часі.',
+                timestamp: getTimestamp()
+              }
+            ]);
+          }
         }
       } catch (err) {
         console.error('Error loading chat history:', err);
-        handleStartCommand();
+        if (!isRealTime) handleStartCommand();
       }
     };
+    
     loadMessagesHistory();
-  }, [userStatus]);
+    
+    // Set up polling for real-time mode only
+    if (isRealTime) {
+      const interval = setInterval(loadMessagesHistory, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedUser, isRealTime, userStatus]);
 
   // Audio simulation player
   const toggleAudio = (msgId: string) => {
@@ -250,7 +300,7 @@ export default function TelegramSimulator({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            telegramId: '412054211',
+            telegramId: getActiveId(),
             score: newScore
           })
         });
@@ -377,7 +427,7 @@ export default function TelegramSimulator({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          telegramId: '412054211',
+          telegramId: getActiveId(),
           packageName: packageName,
           status: 'pending'
         })
@@ -445,10 +495,39 @@ export default function TelegramSimulator({
 
     setCurrentDay(dayNum);
     
+    const pdfStr = lesson.pdfFiles && lesson.pdfFiles.length > 0 
+      ? lesson.pdfFiles.map((f: string) => `• ${f}`).join('\n') 
+      : '—';
+    const formattedText = 
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🌸 <b>ДЕНЬ ${lesson.day} • ПРАКТИКУМ «ТОЧКА ПЕРЕХОДУ»</b> 🌸\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `✨ <b>Тема дня:</b>\n«{lesson.title}»\n\n` +
+      `📝 <b>Про що цей день:</b>\n${lesson.description}\n\n` +
+      `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n` +
+      `ℹ️ <b>МАТЕРІАЛИ ЗАНЯТТЯ:</b>\n` +
+      `🎥 <b>Відео-урок:</b> ${lesson.videoDuration || '15-20 хв'}\n` +
+      `🧘‍♀️ <b>Практика:</b> ${lesson.practiceTitle || 'Аудіо-медитація'}\n\n` +
+      `📖 <b>Детальний зміст:</b>\n${lesson.fullDescription || ''}\n\n` +
+      `📂 <b>Завдання в робочому зошиті:</b>\n${pdfStr}\n\n` +
+      `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n` +
+      `🙏 Проходьте практику у зручному темпі!\n` +
+      `Наступний урок буде надіслано автоматично.`;
+
     const textMsg: ChatMessage = {
       id: `bot-lesson-text-${dayNum}-${Date.now()}`,
       sender: 'bot',
-      text: `🎬 <b>День ${dayNum}. ${lesson.title}</b>\n\n${lesson.description}\n\n${lesson.fullDescription}\n\n👇 Завантажуйте робочий зошит, дивіться відео та слухайте аудіо-практику:`,
+      text: formattedText,
+      timestamp: time,
+      protectContent: true
+    };
+
+    const photoMsg: ChatMessage = {
+      id: `bot-lesson-photo-${dayNum}-${Date.now()}`,
+      sender: 'bot',
+      mediaType: 'photo',
+      photoFileId: lesson.photoFileId || lesson.welcomePhotoFileId,
+      text: `🖼 <b>Зображення дня</b>\nФайл: <code>${lesson.photoFileId || lesson.welcomePhotoFileId}</code>`,
       timestamp: time,
       protectContent: true
     };
@@ -485,62 +564,130 @@ export default function TelegramSimulator({
       protectContent: true
     }));
 
-    setMessages(prev => [...prev, textMsg, videoMsg, audioMsg, ...pdfMessages]);
+    // Send messages sequentially to simulate real Telegram delay
+    setMessages(prev => [...prev, textMsg]);
+
+    let delay = 1000;
+    if (lesson.photoFileId || lesson.welcomePhotoFileId) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, photoMsg]);
+      }, delay);
+      delay += 1000;
+    }
+
+    if (lesson.videoFileId) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, videoMsg]);
+      }, delay);
+      delay += 1000;
+    }
+
+    if (lesson.audioFileId || lesson.audioFileName) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, audioMsg]);
+      }, delay);
+      delay += 1000;
+    }
+
+    if (pdfMessages.length > 0) {
+      pdfMessages.forEach((pdfMsg, idx) => {
+        setTimeout(() => {
+          setMessages(prev => [...prev, pdfMsg]);
+        }, delay + (idx * 1000));
+      });
+    }
   };
 
-  const handleSendMessage = (e?: FormEvent) => {
+  const handleSendMessage = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     if (!inputText.trim()) return;
 
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      text: inputText,
-      timestamp: getTimestamp()
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    const cmd = inputText.trim().toLowerCase();
+    const activeId = getActiveId();
+    const textToSend = inputText.trim();
     setInputText('');
 
-    setTimeout(() => {
-      const time = getTimestamp();
-      if (cmd === '/start' || cmd === 'старт') {
-        handleStartCommand();
-      } else if (cmd === '/help' || cmd === 'допомога') {
-        const helpMsg: ChatMessage = {
-          id: `bot-help-${Date.now()}`,
-          sender: 'bot',
-          text: `🤖 <b>Помічник бота «Точка переходу»:</b>\n\n• /start — перезапустити бота та відкрити головне меню\n• /day1 ... /day8 — надіслати матеріали відповідного дня (доступно тільки для оплачених користувачів)\n• Для індивідуальних питань звертайтеся до Антоніни: @tonypashko`,
-          timestamp: time
-        };
-        setMessages(prev => [...prev, helpMsg]);
-      } else if (cmd.startsWith('/day')) {
-        const dNum = parseInt(cmd.replace('/day', ''));
-        if (dNum >= 1 && dNum <= 8) {
-          sendDayMaterial(dNum);
-        } else {
-          setMessages(prev => [...prev, {
-            id: `bot-err-${Date.now()}`,
-            sender: 'bot',
-            text: `❌ Невірний день. Виберіть від /day1 до /day8.`,
-            timestamp: time
-          }]);
+    if (isRealTime && selectedUser) {
+      // Real-time: Send message as admin/bot to the real user
+      try {
+        const res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegramId: activeId,
+            text: textToSend
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setMessages(prev => [
+            ...prev,
+            {
+              id: `msg-sent-${Date.now()}`,
+              sender: 'bot',
+              text: textToSend,
+              timestamp: getTimestamp()
+            }
+          ]);
         }
-      } else {
-        const echoMsg: ChatMessage = {
-          id: `bot-echo-${Date.now()}`,
-          sender: 'bot',
-          text: `✨ <b>Дякую за твоє повідомлення!</b>\n\n<i>«З тобою все гаразд. Це не криза, це твоя точка переходу.»</i>\n\nНаш бот зараз працює в автоматичному режимі видачі матеріалів практикуму. \n\nЯкщо у вас виникли технічні проблеми або ви бажаєте особистий VIP-супровід Антоніни, напишіть у приватні повідомлення @tonypashko в Instagram.`,
-          timestamp: time,
-          buttons: [
-            { text: '📸 Instagram @tonypashko', action: 'instagram_link', url: 'https://www.instagram.com/tonypashko' },
-            { text: '↩️ Головне меню', action: 'main_menu' }
-          ]
-        };
-        setMessages(prev => [...prev, echoMsg]);
+      } catch (err) {
+        console.error('Failed to send real-time message:', err);
       }
-    }, 1000);
+    } else {
+      // Test Mode (Simulation)
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        sender: 'user',
+        text: textToSend,
+        timestamp: getTimestamp()
+      };
+
+      setMessages(prev => [...prev, userMsg]);
+      saveMessageToServer('user', textToSend);
+      const cmd = textToSend.toLowerCase();
+
+      setTimeout(() => {
+        const time = getTimestamp();
+        if (cmd === '/start' || cmd === 'старт') {
+          handleStartCommand();
+        } else if (cmd === '/help' || cmd === 'допомога') {
+          const helpMsg: ChatMessage = {
+            id: `bot-help-${Date.now()}`,
+            sender: 'bot',
+            text: `🤖 <b>Помічник бота «Точка переходу»:</b>\n\n• /start — перезапустити бота та відкрити головне меню\n• /day1 ... /day8 — надіслати матеріали відповідного дня (доступно тільки для оплачених користувачів)\n• Для індивідуальних питань звертайтеся до Антоніни: @tonypashko`,
+            timestamp: time
+          };
+          setMessages(prev => [...prev, helpMsg]);
+          saveMessageToServer('bot', helpMsg.text);
+        } else if (cmd.startsWith('/day')) {
+          const dNum = parseInt(cmd.replace('/day', ''));
+          if (dNum >= 1 && dNum <= 8) {
+            sendDayMaterial(dNum);
+          } else {
+            const errText = `❌ Невірний день. Виберіть від /day1 до /day8.`;
+            setMessages(prev => [...prev, {
+              id: `bot-err-${Date.now()}`,
+              sender: 'bot',
+              text: errText,
+              timestamp: time
+            }]);
+            saveMessageToServer('bot', errText);
+          }
+        } else {
+          const echoMsg: ChatMessage = {
+            id: `bot-echo-${Date.now()}`,
+            sender: 'bot',
+            text: `✨ <b>Дякую за твоє повідомлення!</b>\n\n<i>«З тобою все гаразд. Це не криза, це твоя точка переходу.»</i>\n\nНаш бот зараз працює в автоматичному режимі видачі матеріалів практикуму. \n\nЯкщо у вас виникли технічні проблеми або ви бажаєте особистий VIP-супровід Антоніни, напишіть у приватні повідомлення @tonypashko в Instagram.`,
+            timestamp: time,
+            buttons: [
+              { text: '📸 Instagram @tonypashko', action: 'instagram_link', url: 'https://www.instagram.com/tonypashko' },
+              { text: '↩️ Головне меню', action: 'main_menu' }
+            ]
+          };
+          setMessages(prev => [...prev, echoMsg]);
+          saveMessageToServer('bot', echoMsg.text);
+        }
+      }, 1000);
+    }
   };
 
   const handleButtonAction = (action: string, messageId?: string) => {
@@ -568,7 +715,7 @@ export default function TelegramSimulator({
       showProgramDay(dNum, messageId);
     } else if (action.startsWith('send_lesson_')) {
       const dNum = parseInt(action.replace('send_lesson_', ''));
-      sendDayMaterial(dNum);
+      handleDaySelect(dNum);
     } else if (action === 'about_author') {
       showAboutAuthor(messageId);
     } else if (action === 'contacts') {
@@ -590,6 +737,86 @@ export default function TelegramSimulator({
     }
   };
 
+  const handleStatusChange = async (newStatus: UserStatus) => {
+    setUserStatus(newStatus);
+    const activeId = getActiveId();
+    
+    if (isRealTime && selectedUser) {
+      try {
+        await fetch(`/api/users/${activeId}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus })
+        });
+        setSelectedUser((prev: any) => prev ? { ...prev, status: newStatus } : null);
+        // Refresh users list
+        const uRes = await fetch('/api/users');
+        const uData = await uRes.json();
+        if (uData.success && Array.isArray(uData.data)) {
+          setUsersList(uData.data);
+        }
+      } catch (err) {
+        console.error('Failed to update status in real-time mode:', err);
+      }
+    } else {
+      handleStartCommand(newStatus);
+    }
+  };
+
+  const handleDaySelect = async (dayNum: number) => {
+    setCurrentDay(dayNum);
+    const activeId = getActiveId();
+    
+    if (isRealTime && selectedUser) {
+      try {
+        setMessages(prev => [
+          ...prev, 
+          {
+            id: `system-broadcasting-${Date.now()}`,
+            sender: 'system',
+            text: `⏳ Надсилання матеріалів Дня ${dayNum} користувачу @${selectedUser.username || selectedUser.telegramId} в Telegram...`,
+            timestamp: getTimestamp()
+          }
+        ]);
+        const res = await fetch('/api/broadcast/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUserId: activeId,
+            dayNum: dayNum
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setMessages(prev => [
+            ...prev,
+            {
+              id: `system-broadcast-success-${Date.now()}`,
+              sender: 'system',
+              text: `✅ День ${dayNum} успішно надіслано в Telegram!`,
+              timestamp: getTimestamp()
+            }
+          ]);
+        } else {
+          throw new Error(data.error || 'Помилка надсилання');
+        }
+      } catch (err: any) {
+        console.error('Failed to trigger manual day broadcast:', err);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `system-broadcast-error-${Date.now()}`,
+            sender: 'system',
+            text: `❌ Помилка надсилання: ${err.message}`,
+            timestamp: getTimestamp()
+          }
+        ]);
+      }
+    } else {
+      sendDayMaterial(dayNum);
+    }
+  };
+
   const resetChat = () => {
     setMessages([
       {
@@ -608,15 +835,68 @@ export default function TelegramSimulator({
         <div>
           <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-3">
             <Sparkles className="w-5 h-5 text-amber-500" />
-            <h3 className="font-display font-semibold text-lg text-white">Панель тестування</h3>
+            <h3 className="font-display font-semibold text-lg text-white">Панель керування</h3>
           </div>
+
+          {/* Mode Selector */}
+          <div className="space-y-3 mb-6 border-b border-slate-800 pb-4">
+            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">Режим роботи</span>
+            <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-850">
+              <button
+                type="button"
+                onClick={() => setIsRealTime(false)}
+                className={`py-2 text-[11px] rounded-lg font-semibold transition-all cursor-pointer ${
+                  !isRealTime
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'hover:bg-slate-900 text-slate-400 font-medium'
+                }`}
+              >
+                Тест (Імітація)
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsRealTime(true)}
+                className={`py-2 text-[11px] rounded-lg font-semibold transition-all cursor-pointer ${
+                  isRealTime
+                    ? 'bg-sky-500 text-white'
+                    : 'hover:bg-slate-900 text-slate-400 font-medium'
+                }`}
+              >
+                Реальний час
+              </button>
+            </div>
+          </div>
+
+          {/* User selector for real-time mode */}
+          {isRealTime && (
+            <div className="space-y-3 mb-6 animate-fadeIn">
+              <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">Оберіть користувача CRM</span>
+              <select
+                value={selectedUser ? selectedUser.telegramId || selectedUser.id : ''}
+                onChange={(e) => {
+                  const u = usersList.find(x => String(x.telegramId || x.id) === e.target.value);
+                  setSelectedUser(u || null);
+                }}
+                className="w-full bg-slate-950 text-slate-200 border border-slate-800 rounded-lg p-2.5 text-xs focus:outline-none focus:border-sky-500"
+              >
+                <option value="">-- Виберіть користувача --</option>
+                {usersList.map((u) => (
+                  <option key={u.telegramId || u.id} value={u.telegramId || u.id}>
+                    {u.username ? `${u.username} (${u.status})` : `ID: ${u.telegramId} (${u.status})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* User Subscription Status Switch */}
           <div className="space-y-3 mb-6">
-            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">Статус підписки</span>
+            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">
+              {isRealTime ? 'Змінити статус підписки' : 'Тестовий статус підписки'}
+            </span>
             <div className="grid grid-cols-2 gap-2">
               <button 
-                onClick={() => { setUserStatus('free'); handleStartCommand('free'); }}
+                onClick={() => handleStatusChange('free')}
                 className={`py-2 px-3 text-xs rounded-lg font-medium transition-all cursor-pointer ${
                   userStatus === 'free' 
                     ? 'bg-rose-500/20 text-rose-300 border border-rose-500' 
@@ -626,7 +906,7 @@ export default function TelegramSimulator({
                 Безкоштовно (Free)
               </button>
               <button 
-                onClick={() => { setUserStatus('base'); handleStartCommand('base'); }}
+                onClick={() => handleStatusChange('base')}
                 className={`py-2 px-3 text-xs rounded-lg font-medium transition-all cursor-pointer ${
                   userStatus === 'base' 
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500' 
@@ -636,7 +916,7 @@ export default function TelegramSimulator({
                 Базовий (Base)
               </button>
               <button 
-                onClick={() => { setUserStatus('support'); handleStartCommand('support'); }}
+                onClick={() => handleStatusChange('support')}
                 className={`py-2 px-3 text-xs rounded-lg font-medium transition-all cursor-pointer ${
                   userStatus === 'support' 
                     ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500' 
@@ -646,7 +926,7 @@ export default function TelegramSimulator({
                 Супровід (Support)
               </button>
               <button 
-                onClick={() => { setUserStatus('vip'); handleStartCommand('vip'); }}
+                onClick={() => handleStatusChange('vip')}
                 className={`py-2 px-3 text-xs rounded-lg font-medium transition-all cursor-pointer ${
                   userStatus === 'vip' 
                     ? 'bg-purple-500/20 text-purple-300 border border-purple-500' 
@@ -658,18 +938,24 @@ export default function TelegramSimulator({
             </div>
             <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-800 text-xs text-slate-400 flex items-start gap-2">
               <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-              <p>Зміна статусу імітує оплату від користувача і миттєво відкриває доступ до занять.</p>
+              <p>
+                {isRealTime 
+                  ? 'Зміна статусу оновлює інформацію про користувача в базі даних та відкриває доступ.'
+                  : 'Зміна статусу імітує оплату від користувача і миттєво відкриває доступ до занять.'}
+              </p>
             </div>
           </div>
 
           {/* Lesson Broadcast Trigger */}
           <div className="space-y-3 mb-6">
-            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">Емуляція розкладу занять</span>
+            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">
+              {isRealTime ? 'Надіслати день занять' : 'Емуляція занять (Клік = Надіслати)'}
+            </span>
             <div className="grid grid-cols-4 gap-1.5">
               {[1, 2, 3, 4, 5, 6, 7, 8].map((day) => (
                 <button
                   key={day}
-                  onClick={() => sendDayMaterial(day)}
+                  onClick={() => handleDaySelect(day)}
                   className={`py-1.5 text-xs rounded-md font-semibold transition-all border cursor-pointer ${
                     currentDay === day && userStatus !== 'free'
                       ? 'bg-amber-500 text-slate-950 border-amber-500'
@@ -680,13 +966,6 @@ export default function TelegramSimulator({
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => sendDayMaterial(currentDay)}
-              className="w-full mt-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-semibold py-2.5 px-4 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Надіслати вибране заняття
-            </button>
           </div>
 
           {/* Quick Shortcuts */}
@@ -723,15 +1002,21 @@ export default function TelegramSimulator({
         {/* Telegram Header */}
         <div className="bg-[#17212b] border-b border-slate-800 px-4 py-3 flex items-center justify-between z-10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 flex items-center justify-center text-slate-950 font-display font-bold text-base shadow-md animate-pulse">
-              ТП
+            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 flex items-center justify-center text-slate-950 font-display font-bold text-base shadow-md">
+              {isRealTime && selectedUser ? (selectedUser.username ? selectedUser.username.substring(1, 3).toUpperCase() : 'КП') : 'ТП'}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h4 className="font-sans font-semibold text-sm text-white">Точка переходу | Практикум</h4>
-                <Bot className="w-3.5 h-3.5 text-sky-400" />
+                <h4 className="font-sans font-semibold text-sm text-white">
+                  {isRealTime && selectedUser 
+                    ? (selectedUser.username || `Користувач ID: ${selectedUser.telegramId}`) 
+                    : 'Точка переходу | Практикум'}
+                </h4>
+                {isRealTime && <Bot className="w-3.5 h-3.5 text-sky-400" />}
               </div>
-              <span className="text-[11px] text-emerald-400 font-medium animate-pulse">online</span>
+              <span className={`text-[11px] font-medium ${isRealTime ? 'text-sky-400' : 'text-emerald-400 animate-pulse'}`}>
+                {isRealTime ? 'діалог в реальному часі' : 'онлайн-симуляція'}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-3 text-slate-400 text-xs font-mono bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
@@ -829,6 +1114,23 @@ export default function TelegramSimulator({
                             />
                           </div>
                           <span className="text-[9px] text-slate-400 block mt-1 truncate">{msg.mediaSubtitle}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Photo Card */}
+                    {msg.mediaType === 'photo' && (
+                      <div className="mt-3 bg-slate-900/75 rounded-xl border border-slate-800 overflow-hidden">
+                        <div className="aspect-video w-full bg-slate-900 flex flex-col items-center justify-center relative border-b border-slate-800/50">
+                          <div className="absolute inset-0 bg-gradient-to-tr from-amber-950/20 to-slate-950 flex items-center justify-center">
+                            <Sparkles className="w-8 h-8 text-amber-500/40 animate-pulse" />
+                          </div>
+                          <span className="text-[10px] text-slate-400 z-10 font-mono bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
+                            🖼 Зображення дня
+                          </span>
+                        </div>
+                        <div className="p-2 flex items-center justify-between">
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0 truncate max-w-[180px]">file_id: {msg.photoFileId?.substring(0, 15)}...</span>
                         </div>
                       </div>
                     )}

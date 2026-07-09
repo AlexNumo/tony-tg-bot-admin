@@ -7,11 +7,10 @@ export const lessonsData: Lesson[] = [
     description: "Побачити, що ти не в тупику, а на порозі нового етапу.",
     practiceTitle: "Практика: Я не втратила мотивацію. Я переросла.",
     videoDuration: "15-20 хв",
-    videoFileId: "BAACAgIAAxkBAAMvajVI75mh0hVpuPrEpXgLuDixMLQAAgWcAAKKmKBJXYmsIoCHVgY8BA",
+    videoFileId: "BAACAgIAAxkBAAOEak68WFQoXaxdBJafbM82R-fSdIoAAmqdAAKTmnhKAeRSrlkxlck8BA",
     audioFileName: "1 день «Точка ПЕРЕХОДУ».m4a",
     pdfFiles: [
-      "1 Практика Моє чуже2.pdf",
-      "1 Практика Моє чуже3.pdf"
+      "Практика 1 день.pdf"
     ],
     fullDescription: "Відео-урок розповість про першу ілюзію контролю — коли здається, що щось закінчилося, але ще незрозуміло що саме. Ми вибудовуємо нову опору: зі мною все гаразд, я просто на порозі масштабного нового етапу."
   },
@@ -21,10 +20,10 @@ export const lessonsData: Lesson[] = [
     description: "Знайти реальні джерела ресурсу в своєму дні, а не абстрактну втому.",
     practiceTitle: "Практика: Виявлення витоків енергії",
     videoDuration: "15-20 хв",
-    videoFileId: "BAACAgIAAxkBAAMvajVI75mh0hVpuPrEpXgLuDixMLQAAgWcAAKKmKBJXYmsIoCHVgY8BB",
+    videoFileId: "BAACAgIAAxkBAAOMak68lpNcGbtz-RbWMIz5u8GWUewAAnCdAAKTmnhKSNW891oY1eA8BA",
     audioFileName: "2 день «Аналіз витоків ресурсу».m4a",
     pdfFiles: [
-      "2 Робочий зошит - Енергетичний аудит.pdf"
+      "Практика 2 день.pdf"
     ],
     fullDescription: "Друга ілюзія контролю: звичний відпочинок більше не повертає сили. Нова опора: я чітко бачу, куди насправді витікає моя енергія і як прибрати фоновий шум."
   },
@@ -34,10 +33,10 @@ export const lessonsData: Lesson[] = [
     description: "Побачити ціну утримання старого і чесно назвати страх змін.",
     practiceTitle: "Практика: Ціна утримання старого",
     videoDuration: "15-20 хв",
-    videoFileId: "BAACAgIAAxkBAAMvajVI75mh0hVpuPrEpXgLuDixMLQAAgWcAAKKmKBJXYmsIoCHVgY8BC",
+    videoFileId: "BAACAgIAAxkBAAOUak685miD5Qe5tiyK468lqxmvCIIAAnSdAAKTmnhKJVfhWEnt7nc8BA",
     audioFileName: "3 день «Робота з прив'язаностями».m4a",
     pdfFiles: [
-      "3 Робочий зошит - Страхи і відпускання.pdf"
+      "Практика 3 дня .pdf"
     ],
     fullDescription: "Коли стає занадто складно зрозуміти, чого хочеться насправді. Ми робимо крок у бік розкриття та чесного визнання страхів, які тримають нас на місці."
   },
@@ -47,10 +46,10 @@ export const lessonsData: Lesson[] = [
     description: "Почути себе за межами ролей, очікувань і постійного «треба».",
     practiceTitle: "Практика: Хто я без моїх ролей",
     videoDuration: "15-20 хв",
-    videoFileId: "BAACAgIAAxkBAAMvajVI75mh0hVpuPrEpXgLuDixMLQAAgWcAAKKmKBJXYmsIoCHVgY8BD",
+    videoFileId: "BAACAgIAAxkBAAOcak69KetWeO__zhR-cNWwVrYN41gAAnidAAKTmnhK_0KTBeO4-xg8BA",
     audioFileName: "4 день «Повернення до себе».m4a",
     pdfFiles: [
-      "4 Робочий зошит - Моє справжнє Я.pdf"
+      "Практика 4 день.pdf"
     ],
     fullDescription: "Зупинка і чесна розмова з собою. Вчимося чути власний внутрішній голос за межами чужого схвалення та соціальних ярликів."
   },
