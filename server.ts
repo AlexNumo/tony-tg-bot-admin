@@ -73,7 +73,7 @@ app.get('/api/supabase-status', (req, res) => {
 
 // Helper to send notifications to Antonina's admin bot
 async function sendAdminNotification(text: string) {
-  const adminBotToken = process.env.ADMIN_BOT_TOKEN || '8923506126:AAE4CrClTzepTR4T2WfmjlYUB2Yba_d_3Tg';
+  const adminBotToken = process.env.ADMIN_BOT_TOKEN;
   const adminIds = [7780694746, 216147493];
   
   if (!adminBotToken) return;
