@@ -18,6 +18,7 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Initialize Supabase Client
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -448,9 +449,10 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
     const localUsers = readLocalUsers();
     const user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
     if (user) {
+      const oldStatus = user.status || 'free';
       user.status = status;
       writeLocalUsers(localUsers);
-      if (status !== 'free') {
+      if (status !== 'free' && oldStatus === 'free') {
         const usernameStr = user.username || '';
         const userLink = usernameStr ? `https://t.me/${usernameStr.replace('@', '')}` : `tg://user?id=${user_id}`;
         const userDisplayName = user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : `@user_${user_id}`;
@@ -460,12 +462,20 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
           `⭐ <b>Новий статус:</b> <code>${status}</code>\n\n` +
           `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
         );
+        sendPurchaseMaterials(user_id).catch(err => console.error("Error sending materials:", err.message));
       }
     }
     return res.json({ success: true, message: 'Статус оновлено локально' });
   }
 
   try {
+    // Отримуємо поточний статус користувача перед оновленням
+    const { data: userProfileBefore } = await supabase
+      .from('users')
+      .select('status')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from('users')
       .update({ status })
@@ -475,7 +485,8 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    if (status !== 'free') {
+    const oldStatus = userProfileBefore?.status || 'free';
+    if (status !== 'free' && oldStatus === 'free') {
       const { data: userProfile } = await supabase
         .from('users')
         .select('username, first_name, last_name')
@@ -494,6 +505,9 @@ app.put('/api/users/:telegramId/status', async (req, res) => {
         `⭐ <b>Новий статус:</b> <code>${status}</code>\n\n` +
         `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ З КОРИСТУВАЧЕМ</b></a>`
       );
+      
+      // Надсилаємо робочі зошити та бонуси
+      sendPurchaseMaterials(user_id).catch(err => console.error("Error sending purchase materials:", err.message));
     }
 
     res.json({ success: true, data });
@@ -1168,6 +1182,85 @@ async function sendTelegramMessageWithKeyboard(chatId: number, text: string, rep
   }
 }
 
+async function sendPurchaseMaterials(userId: number) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.error("TELEGRAM_BOT_TOKEN not found when trying to send purchase materials.");
+    return;
+  }
+  
+  const backendMaterialDir = path.resolve(process.cwd(), '../TonyBot_Backend/Material');
+  const workbook1Path = path.join(backendMaterialDir, 'Робочий_зошит_Точка_переходу.pdf');
+  const workbook2Path = path.join(backendMaterialDir, 'Робочий_зошит_Точка_переходу_2.pdf');
+  const giftDir = path.join(backendMaterialDir, 'Gift');
+  
+  const gifts = [
+    { name: '7_ОЗНАК_ЩО_ЗАСЛУГОВУЄШ_СВОЮ_ЦІННІСТЬ.pptx', type: 'document', caption: '🎁 Бонус 1: Презентація "7 ознак, що заслуговуєш свою цінність"' },
+    { name: 'СИЛА без НАПРУГИ.pptx', type: 'document', caption: '🎁 Бонус 2: Презентація "Сила без напруги"' },
+    { name: 'ПРАКТИКА - Медитація подарунок.m4a', type: 'audio', caption: '🎁 Бонус 3: Аудіопрактика-медитація "Повернення до себе"' }
+  ];
+  
+  // 1. Send welcoming message
+  const congratsText = `🎉 <b>Вітаємо у практикумі «Точка переходу»!</b>\n\n` +
+    `Ваша оплата успішно отримана та доступ до програми активовано.\n\n` +
+    `Нижче ми надсилаємо вам обіцяні матеріали: <b>два варіанти Робочого зошита</b> практикуму (оберіть той, який вам зручніше заповнювати), а також <b>3 спеціальні бонуси</b>, які допоможуть вам підготуватися та пройти цей шлях максимально комфортно і глибоко. ✨`;
+    
+  await sendTelegramMessage(userId, congratsText);
+  saveMessageLocally(String(userId), 'bot', congratsText);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Helper to upload and send a file
+  const sendLocalFile = async (filePath: string, type: 'document' | 'audio', caption: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        console.error(`File not found: ${filePath}`);
+        return;
+      }
+      const fileBuffer = fs.readFileSync(filePath);
+      const fileName = path.basename(filePath);
+      
+      const formData = new FormData();
+      formData.append('chat_id', String(userId));
+      formData.append(type, new Blob([fileBuffer]), fileName);
+      formData.append('caption', caption);
+      formData.append('protect_content', 'true');
+      
+      const method = type === 'document' ? 'sendDocument' : 'sendAudio';
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json() as any;
+      if (!data.ok) {
+        console.error(`Telegram API error sending ${fileName}:`, data);
+      }
+    } catch (err: any) {
+      console.error(`Error sending local file ${filePath}:`, err.message);
+    }
+  };
+
+  // 2. Send Workbook 1
+  console.log(`Sending workbook 1 to user ${userId}...`);
+  await sendLocalFile(workbook1Path, 'document', '📚 Робочий зошит «Точка переходу» (Варіант 1)\n\nТвій особистий простір для роздумів, відкриттів та чесної розмови із собою.');
+  saveMessageLocally(String(userId), 'bot', '[Надіслано Робочий зошит PDF (Варіант 1)]');
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // 3. Send Workbook 2
+  console.log(`Sending workbook 2 to user ${userId}...`);
+  await sendLocalFile(workbook2Path, 'document', '📚 Робочий зошит «Точка переходу» (Варіант 2)\n\nАльтернативний формат зошиту для зручного використання.');
+  saveMessageLocally(String(userId), 'bot', '[Надіслано Робочий зошит PDF (Варіант 2)]');
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // 4. Send Gifts
+  for (const gift of gifts) {
+    const giftPath = path.join(giftDir, gift.name);
+    console.log(`Sending gift ${gift.name} to user ${userId}...`);
+    await sendLocalFile(giftPath, gift.type as any, gift.caption);
+    saveMessageLocally(String(userId), 'bot', `[Надіслано бонус: ${gift.name}]`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+}
+
 // Helper: Auto-register user from Telegram updates
 async function registerUserFromTelegram(userId: number, username: string, phone: string) {
   const last_active = 'Сьогодні, щойно';
@@ -1348,8 +1441,7 @@ async function handleTelegramUpdate(update: any) {
               `📝 *Опис:* ${lesson.description}\n\n` +
               `🎥 *Відео-урок:* ${lesson.videoDuration || '15-20 хв'}\n` +
               `🧘‍♀️ *Практика:* ${lesson.practiceTitle || 'Аудіо-медитація'}\n\n` +
-              `*Детальний зміст заняття:*\n${lesson.fullDescription || ''}\n\n` +
-              `📂 *Завдання в робочому зошиті:*\n` +
+              `📖 *Текстова версія практики (якщо краще читати):*\n` +
               `${lesson.pdfFiles && lesson.pdfFiles.length > 0 ? lesson.pdfFiles.map((f: string) => `• ${f}`).join('\n') : '—'}`;
             await sendTelegramMessage(userId, lessonText);
             saveMessageLocally(String(userId), 'bot', lessonText);
@@ -1667,7 +1759,7 @@ async function runNewsletterBroadcast(
       `🎥 *Відео-урок:* ${lesson.videoDuration || '15-20 хв'}\n` +
       `🧘‍♀️ *Практика:* ${lesson.practiceTitle || 'Аудіо-медитація'}\n\n` +
       `📖 *Детальний зміст:*\n${lesson.fullDescription || ''}\n\n` +
-      `📂 *Завдання в робочому зошиті:*\n` +
+      `📖 *Текстова версія практики (якщо краще читати):*\n` +
       `${lesson.pdfFiles && lesson.pdfFiles.length > 0 ? lesson.pdfFiles.map((f: string) => `• ${f}`).join('\n') : '—'}\n\n` +
       `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n` +
       `🙏 Проходьте практику у зручному темпі!\n` +
@@ -1757,7 +1849,7 @@ async function runNewsletterBroadcast(
                 body: JSON.stringify({
                   chat_id: parseInt(uId),
                   document: lesson.pdfFileId,
-                  caption: '📝 Практика (робочий зошит)',
+                  caption: '📝 Текстова версія практики (якщо вам зручніше читати, ніж слухати)',
                   protect_content: true
                 })
               });
@@ -1884,6 +1976,208 @@ app.post('/api/broadcast/trigger', async (req, res) => {
 // Scheduler retrieve logs
 app.get('/api/broadcast/logs', (req, res) => {
   res.json({ success: true, data: getBroadcastLogs() });
+});
+
+// API Endpoint: WayForPay Webhook
+app.post('/api/payment/wayforpay-webhook', async (req, res) => {
+  const { transactionStatus, orderReference, amount, phone, email, productName } = req.body;
+  console.log('WayForPay webhook received:', req.body);
+  
+  if (transactionStatus === 'Approved') {
+    // 1. Визначаємо пакет за сумою або назвою продукту
+    let status: 'base' | 'support' | 'vip' = 'base';
+    const amountVal = parseFloat(amount || '0');
+    
+    const isVip = (productName && productName.some((n: string) => n.toLowerCase().includes('vip'))) || amountVal >= 350;
+    const isSupport = (productName && productName.some((n: string) => n.toLowerCase().includes('супровід') || n.toLowerCase().includes('support'))) || (amountVal >= 100 && amountVal < 350);
+    
+    if (isVip) {
+      status = 'vip';
+    } else if (isSupport) {
+      status = 'support';
+    } else {
+      status = 'base';
+    }
+    
+    const packageName = status === 'vip' ? 'VIP (Індивідуально) - 400€' :
+                        status === 'support' ? 'Супровід (Зі спікером) - 125€' :
+                        'Базовий (Самостійно) - 20€';
+
+    // 2. Ідентифікація Telegram користувача за телефоном
+    if (phone) {
+      // Нормалізуємо номер телефону (тільки цифри)
+      const normalizedPhone = phone.replace(/\D/g, '');
+      console.log(`Searching user for phone: ${normalizedPhone} (original: ${phone})`);
+      
+      let matchedUser: any = null;
+      if (USE_LOCAL_DB || !supabase) {
+        const localUsers = readLocalUsers();
+        matchedUser = localUsers.find((u: any) => {
+          if (!u.phone) return false;
+          const uPhone = u.phone.replace(/\D/g, '');
+          return uPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(uPhone) || (uPhone.length >= 9 && normalizedPhone.endsWith(uPhone.slice(-9)));
+        });
+      } else {
+        try {
+          const { data } = await supabase.from('users').select('*');
+          if (data) {
+            matchedUser = data.find((u: any) => {
+              if (!u.phone) return false;
+              const uPhone = u.phone.replace(/\D/g, '');
+              return uPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(uPhone) || (uPhone.length >= 9 && normalizedPhone.endsWith(uPhone.slice(-9)));
+            });
+          }
+        } catch (dbErr: any) {
+          console.error('Error fetching users from Supabase for webhook:', dbErr.message);
+        }
+      }
+      
+      if (matchedUser) {
+        const userId = matchedUser.user_id || matchedUser.id;
+        console.log(`Found active user in TG bot: ${userId}. Activating status ${status}...`);
+        
+        // Оновлюємо статус користувача
+        const last_active = 'Сьогодні, активовано автоматично через WayForPay';
+        writeProgress(String(userId), 1, last_active);
+        
+        if (USE_LOCAL_DB || !supabase) {
+          const localUsers = readLocalUsers();
+          const u = localUsers.find((x: any) => String(x.user_id || x.telegramId || x.id) === String(userId));
+          if (u) {
+            u.status = status;
+            writeLocalUsers(localUsers);
+          }
+        } else {
+          try {
+            await supabase.from('users').update({ status, last_active }).eq('user_id', userId);
+          } catch (e: any) {
+            console.error('Error updating status in Supabase:', e.message);
+          }
+        }
+        
+        // Зберігаємо лід зі статусом success
+        if (USE_LOCAL_DB || !supabase) {
+          const localLeads = readLocalLeads();
+          localLeads.push({
+            id: localLeads.length + 1,
+            user_id: Number(userId),
+            package_name: packageName,
+            status: 'success',
+            created_at: new Date().toISOString()
+          });
+          writeLocalLeads(localLeads);
+        } else {
+          try {
+            await supabase.from('leads').insert({
+              user_id: Number(userId),
+              package_name: packageName,
+              status: 'success',
+              created_at: new Date().toISOString()
+            });
+          } catch (e: any) {
+            console.error('Error inserting lead in Supabase:', e.message);
+          }
+        }
+        
+        logToGoogleSheet('Leads', { userId, packageName, status: 'success' });
+        
+        // Надсилаємо сповіщення адміну
+        const userLink = `tg://user?id=${userId}`;
+        sendAdminNotification(
+          `💳 <b>Успішна оплата WayForPay (автоматично)!</b>\n\n` +
+          `👤 <b>Користувач:</b> @${matchedUser.username || matchedUser.user_id}\n` +
+          `🆔 <b>Telegram ID:</b> <code>${userId}</code>\n` +
+          `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+          `💰 <b>Сума:</b> <code>${amount}</code>\n` +
+          `📦 <b>Тариф:</b> <code>${packageName}</code>\n\n` +
+          `👉 <a href="${userLink}"><b>ВІДКРИТИ ДІАЛОГ</b></a>`
+        );
+        
+        // Надсилаємо робочі зошити та бонуси!
+        await sendPurchaseMaterials(Number(userId));
+      } else {
+        // Користувача немає в боті -> створюємо гостьовий акаунт для подальшого зв'язування
+        // Використовуємо телефон як унікальний BIGINT user_id (останні 10 цифр)
+        const guestId = parseInt(normalizedPhone.slice(-10));
+        
+        if (isNaN(guestId)) {
+          console.error("Failed to parse guestId from phone:", normalizedPhone);
+          return res.json({ orderReference: orderReference || '', status: 'accept' });
+        }
+        
+        console.log(`User not found in TG bot. Creating guest account with user_id: ${guestId}...`);
+        
+        const join_date = new Date().toISOString();
+        const last_active = 'Оплачено на сайті, очікує запуску бота';
+        
+        if (USE_LOCAL_DB || !supabase) {
+          const localUsers = readLocalUsers();
+          localUsers.push({
+            user_id: guestId,
+            telegramId: String(guestId),
+            username: `guest_buyer`,
+            phone: `+${normalizedPhone}`,
+            status: status,
+            join_date,
+            current_day: 1,
+            last_active
+          });
+          writeLocalUsers(localUsers);
+          
+          const localLeads = readLocalLeads();
+          localLeads.push({
+            id: localLeads.length + 1,
+            user_id: guestId,
+            package_name: packageName,
+            status: 'success',
+            created_at: new Date().toISOString()
+          });
+          writeLocalLeads(localLeads);
+        } else {
+          try {
+            // Спочатку створюємо користувача
+            await supabase.from('users').insert({
+              user_id: guestId,
+              username: 'guest_buyer',
+              phone: `+${normalizedPhone}`,
+              status: status,
+              join_date
+            });
+            
+            // Створюємо лід
+            await supabase.from('leads').insert({
+              user_id: guestId,
+              package_name: packageName,
+              status: 'success',
+              created_at: new Date().toISOString()
+            });
+          } catch (dbErr: any) {
+            console.error('Error saving guest account in Supabase:', dbErr.message);
+          }
+        }
+        
+        logToGoogleSheet('Leads', { userId: guestId, packageName, status: 'success' });
+        
+        // Сповіщення адміна про покупку гостем
+        sendAdminNotification(
+          `⚠️ <b>Оплата від нового користувача (ще не в боті)!</b>\n\n` +
+          `👤 <b>Гість:</b> <code>guest_buyer</code>\n` +
+          `🆔 <b>Тимчасовий ID:</b> <code>${guestId}</code>\n` +
+          `📞 <b>Телефон:</b> <code>+${normalizedPhone}</code>\n` +
+          `📧 <b>Email:</b> <code>${email || 'не вказано'}</code>\n` +
+          `📦 <b>Пакет:</b> <code>${packageName}</code>\n\n` +
+          `<i>Користувач отримає матеріали одразу після того, як запустить бот та поділиться контактом.</i>`
+        );
+      }
+    } else {
+      console.warn('WayForPay webhook has no phone number.');
+    }
+  }
+  
+  res.json({
+    orderReference: orderReference || '',
+    status: 'accept'
+  });
 });
 
 // Background schedule checker (runs once every minute)
