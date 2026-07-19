@@ -1,6 +1,6 @@
 {
-  "broadcastHour": 15,
-  "broadcastMinute": 0,
-  "targetAudience": "all",
-  "lastBroadcastDate": ""
+  "broadcastHour": 23,
+  "broadcastMinute": 49,
+  "targetAudience": "paid",
+  "lastBroadcastDate": "2026-07-19"
 }

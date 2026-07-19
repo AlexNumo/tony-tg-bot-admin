@@ -362,22 +362,26 @@ app.post('/api/users', async (req, res) => {
   const join_date = new Date().toISOString();
   const last_active = 'Сьогодні, щойно';
 
-  // Save user progress locally
-  writeProgress(String(user_id), currentDay || 1, last_active);
+  // Save user progress locally (preserve existing current_day if already set)
+  const progressStore = readProgress();
+  const existingDay = progressStore[String(user_id)]?.current_day;
+  const targetDay = (currentDay !== undefined && currentDay !== null && currentDay !== '') ? Number(currentDay) : (existingDay || 1);
+  writeProgress(String(user_id), targetDay, last_active);
 
   if (USE_LOCAL_DB || !supabase) {
     const localUsers = readLocalUsers();
     let user = localUsers.find((u: any) => String(u.user_id || u.telegramId || u.id) === String(user_id));
     if (user) {
       if (username !== undefined) user.username = username;
-      if (phone !== undefined) user.phone = phone;
-      if (status !== undefined) user.status = status;
+      if (phone !== undefined && phone !== null && phone !== '') user.phone = phone;
+      if (status !== undefined && (status !== 'free' || !user.status || user.status === 'free')) user.status = status;
       if (firstName !== undefined) user.first_name = firstName;
       if (lastName !== undefined) user.last_name = lastName;
       if (avatarUrl !== undefined) user.avatar_url = avatarUrl;
       if (utmSource !== undefined) user.utm_source = utmSource;
       if (utmMedium !== undefined) user.utm_medium = utmMedium;
       if (isBlocked !== undefined) user.is_blocked = isBlocked;
+      user.current_day = targetDay;
     } else {
       user = {
         user_id,
@@ -392,7 +396,7 @@ app.post('/api/users', async (req, res) => {
         utm_medium: utmMedium || '',
         is_blocked: isBlocked || false,
         join_date,
-        current_day: currentDay || 1,
+        current_day: targetDay,
         last_active
       };
       localUsers.push(user);
@@ -402,20 +406,39 @@ app.post('/api/users', async (req, res) => {
   }
 
   try {
+    let finalStatus = status || 'free';
+    let finalPhone = phone || null;
+
+    // Check existing user in Supabase to avoid overwriting paid status or phone
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('status, phone, join_date')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    if (existingUser) {
+      if (existingUser.status && existingUser.status !== 'free' && (!status || status === 'free')) {
+        finalStatus = existingUser.status;
+      }
+      if (existingUser.phone && (!phone || phone.trim() === '')) {
+        finalPhone = existingUser.phone;
+      }
+    }
+
     const { data, error } = await supabase
       .from('users')
       .upsert({
         user_id,
         username,
-        phone: phone || null,
-        status: status || 'free',
+        phone: finalPhone,
+        status: finalStatus,
         first_name: firstName || null,
         last_name: lastName || null,
         avatar_url: avatarUrl || null,
         utm_source: utmSource || null,
         utm_medium: utmMedium || null,
         is_blocked: isBlocked || false,
-        join_date
+        join_date: existingUser?.join_date || join_date
       }, { onConflict: 'user_id' })
       .select();
 
@@ -1147,24 +1170,7 @@ app.post('/api/messages', async (req, res) => {
 });
 
 // Helper: Telegram API callers
-async function sendTelegramMessage(chatId: number, text: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) return;
-  try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text
-      })
-    });
-  } catch (err) {
-    console.error('Error sending message:', err);
-  }
-}
-
-async function sendTelegramMessageWithKeyboard(chatId: number, text: string, replyMarkup: any) {
+async function sendTelegramMessage(chatId: number, text: string, parseMode: string = 'HTML') {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
   try {
@@ -1174,7 +1180,26 @@ async function sendTelegramMessageWithKeyboard(chatId: number, text: string, rep
       body: JSON.stringify({
         chat_id: chatId,
         text: text,
-        reply_markup: replyMarkup
+        parse_mode: parseMode
+      })
+    });
+  } catch (err) {
+    console.error('Error sending message:', err);
+  }
+}
+
+async function sendTelegramMessageWithKeyboard(chatId: number, text: string, replyMarkup: any, parseMode: string = 'HTML') {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        reply_markup: replyMarkup,
+        parse_mode: parseMode
       })
     });
   } catch (err) {
@@ -1203,11 +1228,12 @@ async function sendPurchaseMaterials(userId: number) {
   // 1. Send welcoming message
   const congratsText = `🎉 <b>Вітаємо у практикумі «Точка переходу»!</b>\n\n` +
     `Ваша оплата успішно отримана та доступ до програми активовано.\n\n` +
-    `Нижче ми надсилаємо вам обіцяні матеріали: <b>два варіанти Робочого зошита</b> практикуму (оберіть той, який вам зручніше заповнювати), а також <b>3 спеціальні бонуси</b>, які допоможуть вам підготуватися та пройти цей шлях максимально комфортно і глибоко. ✨`;
+    `Нижче ми надсилаємо вам обіцяні матеріали: <b>два варіанти Робочого зошита</b> практикуму (оберіть той, який вам зручніше заповнювати), а також <b>3 спеціальні бонуси</b>, які допоможуть вам підготуватися та пройти цей шлях максимально комфортно і глибоко. ✨\n\n` +
+    `<i>⏳ Для вашої зручності файли надходитимуть послідовно з інтервалом у 15 секунд.</i>`;
     
   await sendTelegramMessage(userId, congratsText);
   saveMessageLocally(String(userId), 'bot', congratsText);
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await new Promise(resolve => setTimeout(resolve, 3000));
   
   // Helper to upload and send a file
   const sendLocalFile = async (filePath: string, type: 'document' | 'audio', caption: string) => {
@@ -1243,21 +1269,24 @@ async function sendPurchaseMaterials(userId: number) {
   console.log(`Sending workbook 1 to user ${userId}...`);
   await sendLocalFile(workbook1Path, 'document', '📚 Робочий зошит «Точка переходу» (Варіант 1)\n\nТвій особистий простір для роздумів, відкриттів та чесної розмови із собою.');
   saveMessageLocally(String(userId), 'bot', '[Надіслано Робочий зошит PDF (Варіант 1)]');
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  await new Promise(resolve => setTimeout(resolve, 15000));
   
   // 3. Send Workbook 2
   console.log(`Sending workbook 2 to user ${userId}...`);
   await sendLocalFile(workbook2Path, 'document', '📚 Робочий зошит «Точка переходу» (Варіант 2)\n\nАльтернативний формат зошиту для зручного використання.');
   saveMessageLocally(String(userId), 'bot', '[Надіслано Робочий зошит PDF (Варіант 2)]');
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 15000));
 
   // 4. Send Gifts
-  for (const gift of gifts) {
+  for (let i = 0; i < gifts.length; i++) {
+    const gift = gifts[i];
     const giftPath = path.join(giftDir, gift.name);
     console.log(`Sending gift ${gift.name} to user ${userId}...`);
     await sendLocalFile(giftPath, gift.type as any, gift.caption);
     saveMessageLocally(String(userId), 'bot', `[Надіслано бонус: ${gift.name}]`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (i < gifts.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 15000));
+    }
   }
 }
 
@@ -1786,8 +1815,9 @@ async function runNewsletterBroadcast(
         if (tgData && tgData.ok) {
           tgSent = true;
           
-          // 2. Send photo if registered (with copy protection)
+          // 2. Send photo if registered (with 15s delay)
           if (lesson.photoFileId) {
+            await new Promise(resolve => setTimeout(resolve, 15000));
             try {
               await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
                 method: 'POST',
@@ -1804,8 +1834,9 @@ async function runNewsletterBroadcast(
             }
           }
           
-          // 3. Send video if registered (with copy protection)
+          // 3. Send video if registered (with 15s delay)
           if (lesson.videoFileId) {
+            await new Promise(resolve => setTimeout(resolve, 15000));
             try {
               await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
                 method: 'POST',
@@ -1822,8 +1853,9 @@ async function runNewsletterBroadcast(
             }
           }
           
-          // 4. Send audio if registered (with copy protection)
+          // 4. Send audio if registered (with 15s delay)
           if (lesson.audioFileId) {
+            await new Promise(resolve => setTimeout(resolve, 15000));
             try {
               await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
                 method: 'POST',
@@ -1840,8 +1872,9 @@ async function runNewsletterBroadcast(
             }
           }
           
-          // 5. Send PDF document if registered (with copy protection)
+          // 5. Send PDF document if registered (with 15s delay)
           if (lesson.pdfFileId) {
+            await new Promise(resolve => setTimeout(resolve, 15000));
             try {
               await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
                 method: 'POST',
@@ -2176,11 +2209,12 @@ app.post('/api/payment/wayforpay-webhook', async (req, res) => {
   
   res.json({
     orderReference: orderReference || '',
-    status: 'accept'
+    status: 'accept',
+    time: Math.floor(Date.now() / 1000)
   });
 });
 
-// Background schedule checker (runs once every minute)
+// Background schedule checker (runs once every 15 seconds)
 function startBackgroundScheduler() {
   console.log('[Scheduler] Background service active.');
   setInterval(async () => {
@@ -2190,20 +2224,20 @@ function startBackgroundScheduler() {
       
       const currentHour = now.getHours();
       const currentMinute = now.getMinutes();
-      const todayStr = now.toISOString().split('T')[0];
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       
-      if (currentHour === config.broadcastHour && currentMinute === config.broadcastMinute) {
+      if (Number(currentHour) === Number(config.broadcastHour) && Number(currentMinute) === Number(config.broadcastMinute)) {
         if (config.lastBroadcastDate !== todayStr) {
           config.lastBroadcastDate = todayStr;
           saveSchedulerConfig(config);
-          console.log(`[Scheduler] Auto-broadcast triggered for hour ${currentHour}:${currentMinute}`);
+          console.log(`[Scheduler] Auto-broadcast triggered for hour ${currentHour}:${currentMinute} on date ${todayStr}`);
           await runNewsletterBroadcast(false);
         }
       }
     } catch (err: any) {
       console.error('[Scheduler] Error in background scheduler loop:', err.message);
     }
-  }, 60000);
+  }, 15000);
 }
 
 
